@@ -7,14 +7,14 @@ import (
 )
 
 func main() {
-	fmt.Println("Starting go-mutux reflection server")
+	fmt.Println("Starting Mutux server")
 	mutux, err := mutux.NewMutux(8080)
 	if err != nil {
-		fmt.Println("Error initiating go-mutux reflection server: " + err.Error())
+		fmt.Println("Error initiating Mutux server: " + err.Error())
 		return
 	}
 	mutux.StartAsync()
-	mutux.AddPathMsg("hello", `{"message":"hello world!"}`)
+	mutux.AddPathMsg("hello", `{"message":"Hello, world!"}`)
 	mutux.AddHeader("Content-Type", "application/json")
 	// "select {}" hangs main program allowing server to run
 	select {}

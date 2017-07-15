@@ -3,11 +3,20 @@ mutux-golang
 
 ![mutux Logo](http://imgur.com/7XnVIhM.png)
 
-`mutux` creates a mutable message server that can be modified at runtime, either via:
-  * external POST
-  * program that instantiated Mutux
- 
-##### dependency: 
-  * [gorilla/mux](https://github.com/gorilla/mux/)
+##### `Mutux` creates a mutable message server, that can be modified at runtime via:
 
-It is set on-the-fly to serve any message, at any URL path!
+##### external POST
+```
+POST /hello
+{"message":"Hello, world!", "status":200}
+```
+##### program
+```go
+mutux.AddPathMsgAndStatus("hello", `{"message":"Hello, world!"}, 200`)
+```
+See also:
+ * [example/main.go](https://github.com/dzhoou/mutux/blob/master/example/main.go) -- example code
+ * [mutux.go](https://github.com/dzhoou/mutux/blob/master/mutux.go) -- list of functions
+
+### dependency 
+  * [gorilla/mux](https://github.com/gorilla/mux/)
