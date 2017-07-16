@@ -12,12 +12,14 @@ import (
 
 // Mutux a mutable server that can be set at runtime to return any message at any URL.
 type Mutux struct {
-	Port      int
-	Listener  *net.Listener
-	Server    *http.Server
-	Pathmsg   map[string]Message
-	Headers   map[string]string
-	AllowPOST *bool
+	Port         int
+	Listener     *net.Listener
+	Server       *http.Server
+	Pathmsg      map[string]Message
+	Headers      map[string]string
+	AllowPOST    *bool
+	AsyncSignal  *chan (bool)
+	AsyncStopped *chan (bool)
 }
 
 // Message store message and status to return for a given path
@@ -43,8 +45,8 @@ func (m *Mutux) Start() error {
 		if err != nil {
 			return err
 		}
-		return nil
 	}
+	fmt.Println("starting server")
 	return (*m.Server).Serve((*m.Listener).(*net.TCPListener))
 }
 
@@ -56,17 +58,16 @@ func (m *Mutux) StartAsync() error {
 			return err
 		}
 	}
+	fmt.Println("starting server async")
 	go (*m.Server).Serve((*m.Listener).(*net.TCPListener))
 	return nil
 }
 
-// Stop close Mutux server listener
+// Stop close Mutux server
 func (m *Mutux) Stop() error {
-	if m.Listener != nil {
-		err := (*m.Listener).Close()
-		if err != nil {
-			return err
-		}
+	if m.Server != nil {
+		fmt.Println("closing server")
+		m.Server.Shutdown(nil)
 		m.Listener = nil
 	}
 	return nil
@@ -169,7 +170,7 @@ func NewMutux(port int) (*Mutux, error) {
 		fmt.Fprintf(w, "success")
 	}).Methods("POST")
 
-	// POST handler stores message body for any URL path
+	// OPTIONS handler handles browser CORS preflight
 	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]+}`, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 	}).Methods("OPTIONS")
