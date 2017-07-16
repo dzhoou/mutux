@@ -43,6 +43,7 @@ func (m *Mutux) Start() error {
 		if err != nil {
 			return err
 		}
+		return nil
 	}
 	return (*m.Server).Serve((*m.Listener).(*net.TCPListener))
 }
