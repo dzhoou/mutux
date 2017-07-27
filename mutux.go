@@ -7,17 +7,22 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
+
 	"github.com/gorilla/mux"
 )
 
 // Mutux a mutable server that can be set at runtime to return any message at any URL.
 type Mutux struct {
-	Address  string
-	Listener *net.Listener
-	Server   *http.Server
-	Pathmsg  map[string]Message
-	Headers  map[string]string
-	AllowPUT *bool
+	Address            string
+	Listener           *net.Listener
+	Server             *http.Server
+	Pathmsg            map[string]Message
+	Headers            map[string]string
+	AllowPUT           *bool
+	Handler            *mux.Router
+	CustomHandlerfuncs []Handlerfunc
+	handlerfuncs       []Handlerfunc
 }
 
 // Message store message and status to return for a given path
@@ -26,14 +31,30 @@ type Message struct {
 	Status *int    `json:"status"`
 }
 
+type Handlerfunc struct {
+	Route    string
+	Methods  []string
+	Function *func(w http.ResponseWriter, r *http.Request)
+}
+
 func (m *Mutux) remakeListener() error {
 	if m == nil {
 		return nil
 	}
 	listener, err := net.Listen("tcp", m.Address)
+	fmt.Printf("remaking listener...")
+	i := 0
+	for err != nil && i < 100 {
+		time.Sleep(20 * time.Millisecond)
+		listener, err = net.Listen("tcp", m.Address)
+		fmt.Printf(".")
+		i++
+	}
 	if err != nil {
+		fmt.Println("\nFailed to remake listener after retries")
 		return err
 	}
+	fmt.Println("\nsuccess remaking listener.")
 	m.Listener = &listener
 	return nil
 }
@@ -76,7 +97,10 @@ func (m *Mutux) Stop() error {
 	}
 	if m.Server != nil {
 		fmt.Println("closing server")
-		m.Server.Shutdown(nil)
+		err := m.Server.Shutdown(nil)
+		if err != nil {
+			return err
+		}
 		m.Listener = nil
 	}
 	return nil
@@ -169,6 +193,56 @@ func (m *Mutux) DisablePUT() {
 	*m.AllowPUT = false
 }
 
+// AddHandlerFunc add user-defined handler func to path
+func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *http.Request), methods []string) {
+	if m == nil {
+		return
+	}
+	// Add to func array
+	m.CustomHandlerfuncs = append(m.CustomHandlerfuncs, Handlerfunc{
+		Route:    route,
+		Function: f,
+		Methods:  methods,
+	})
+	m.RemakeRouterAsync()
+}
+
+// ClearHandlerFunc delete all user-defined handler funcs
+func (m *Mutux) ClearHandlerFunc() {
+	if m == nil {
+		return
+	}
+	// delete func array
+	m.CustomHandlerfuncs = nil
+	m.RemakeRouterAsync()
+}
+
+// RemakeRouterAsync restart router (to load newly added functions to server host, for example)
+func (m *Mutux) RemakeRouterAsync() {
+	if m == nil {
+		return
+	}
+	// recreate router
+	r := mux.NewRouter()
+	// add custom funcs to router; order matters here because otherwise message funcs would override the custom funcs
+	for i := len(m.CustomHandlerfuncs) - 1; i >= 0; i-- {
+		h := m.CustomHandlerfuncs[i]
+		fmt.Println(h)
+		for _, m := range h.Methods {
+			r.HandleFunc(h.Route, *h.Function).Methods(m)
+		}
+	}
+	// add back original message funcs to router
+	for _, h := range m.handlerfuncs {
+		for _, m := range h.Methods {
+			r.HandleFunc(h.Route, *h.Function).Methods(m)
+		}
+	}
+	m.Stop()
+	m.Server = &http.Server{Addr: m.Address, Handler: r}
+	m.StartAsync()
+}
+
 //NewMutux creates a new instance of Mutux server with port number specified
 func NewMutux(port int) (*Mutux, error) {
 	return NewMutuxWithAddr(fmt.Sprintf(":%d", port))
@@ -183,8 +257,7 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 	allowPUT := true
 	r := mux.NewRouter()
 
-	// GET handler returns message for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
+	messagefunc := func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		name := vars["name"]
 		msg, exists := pathmsg[name]
@@ -197,26 +270,8 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 			w.Header().Set(k, v)
 		}
 		fmt.Fprintf(w, *msg.Msg)
-	}).Methods("GET")
-
-	// POST handler returns message for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		name := vars["name"]
-		msg, exists := pathmsg[name]
-		if !exists {
-			http.Error(w, "404 page not found", 404)
-			return
-		}
-		w.WriteHeader(*msg.Status)
-		for k, v := range headers {
-			w.Header().Set(k, v)
-		}
-		fmt.Fprintf(w, *msg.Msg)
-	}).Methods("POST")
-
-	// PUT handler stores message body for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
+	}
+	updatemessagefunc := func(w http.ResponseWriter, r *http.Request) {
 		if !allowPUT {
 			return
 		}
@@ -244,13 +299,38 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		fmt.Println("adding path: /" + name)
 		pathmsg[name] = putmsg
 		fmt.Fprintf(w, "success")
-	}).Methods("PUT")
-
-	// OPTIONS handler handles browser CORS preflight
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
+	}
+	preflightfunc := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT")
-	}).Methods("OPTIONS")
+	}
+
+	handlerfuncs := []Handlerfunc{
+		Handlerfunc{
+			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
+			Function: &messagefunc,
+			Methods:  []string{"GET", "POST"},
+		},
+		Handlerfunc{
+			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
+			Function: &updatemessagefunc,
+			Methods:  []string{"PUT"},
+		},
+		Handlerfunc{
+			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
+			Function: &preflightfunc,
+			Methods:  []string{"OPTIONS"},
+		},
+	}
+
+	// GET/POST handler returns message for any URL path
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, messagefunc).Methods("GET", "POST")
+
+	// PUT handler updates message body for any URL path
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, updatemessagefunc).Methods("PUT")
+
+	// OPTIONS handler handles browser CORS preflight
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, preflightfunc).Methods("OPTIONS")
 
 	server := &http.Server{Addr: addr, Handler: r}
 	listener, err := net.Listen("tcp", addr)
@@ -259,12 +339,14 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 	}
 
 	mutux := Mutux{
-		Address:  addr,
-		Server:   server,
-		Listener: &listener,
-		Pathmsg:  pathmsg,
-		Headers:  headers,
-		AllowPUT: &allowPUT,
+		Address:      addr,
+		Server:       server,
+		Listener:     &listener,
+		Pathmsg:      pathmsg,
+		Headers:      headers,
+		AllowPUT:     &allowPUT,
+		Handler:      r,
+		handlerfuncs: handlerfuncs,
 	}
 
 	return &mutux, nil
