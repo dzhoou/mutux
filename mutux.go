@@ -42,14 +42,17 @@ func (m *Mutux) remakeListener() error {
 	if m == nil {
 		return nil
 	}
-	listener, err := net.Listen("tcp", m.Address)
 	fmt.Printf("remaking listener...")
-	i := 0
-	for err != nil && i < 100 {
-		time.Sleep(20 * time.Millisecond)
-		listener, err = net.Listen("tcp", m.Address)
-		fmt.Printf(".")
-		i++
+	listener, err := net.Listen("tcp", m.Address)
+	if err != nil {
+		for i := 0; i < 100; i++ {
+			time.Sleep(20 * time.Millisecond)
+			listener, err = net.Listen("tcp", m.Address)
+			if err == nil {
+				break
+			}
+			fmt.Printf(".")
+		}
 	}
 	if err != nil {
 		fmt.Println("\nFailed to remake listener after retries")
@@ -195,9 +198,9 @@ func (m *Mutux) DisablePUT() {
 }
 
 // AddHandlerFunc add user-defined handler func to path
-func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *http.Request), methods []string) {
+func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *http.Request), methods []string) error {
 	if m == nil {
-		return
+		return nil
 	}
 	// Add to func array
 	m.CustomHandlerfuncs = append(m.CustomHandlerfuncs, Handlerfunc{
@@ -205,30 +208,38 @@ func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *h
 		Function: f,
 		Methods:  methods,
 	})
-	m.RemakeRouter()
+	err := m.RemakeRouter()
+	if err != nil {
+		return fmt.Errorf("Failed to add handler function: %s", err.Error())
+	}
+	return nil
 }
 
 // ClearHandlerFunc delete all user-defined handler funcs
-func (m *Mutux) ClearHandlerFunc() {
+func (m *Mutux) ClearHandlerFunc() error {
 	if m == nil {
-		return
+		return nil
 	}
 	// delete func array
 	m.CustomHandlerfuncs = nil
-	m.RemakeRouter()
+	err := m.RemakeRouter()
+	if err != nil {
+		return fmt.Errorf("Failed to clear handler functions: %s", err.Error())
+	}
+	return nil
 }
 
 // RemakeRouter restart router (to load newly added functions to server host, for example)
-func (m *Mutux) RemakeRouter() {
+func (m *Mutux) RemakeRouter() error {
 	if m == nil {
-		return
+		return nil
 	}
 	// recreate router
 	r := mux.NewRouter()
-	// add custom funcs to router; order matters here because otherwise message funcs would override the custom funcs
+	// add custom funcs to router; they are added before the original funcs because otherwise the original funcs would override the custom funcs
+	// add custom funcs in reverse order so that newly added funcs have higher processing priority
 	for i := len(m.CustomHandlerfuncs) - 1; i >= 0; i-- {
 		h := m.CustomHandlerfuncs[i]
-		fmt.Println(h)
 		for _, m := range h.Methods {
 			r.HandleFunc(h.Route, *h.Function).Methods(m)
 		}
@@ -239,9 +250,16 @@ func (m *Mutux) RemakeRouter() {
 			r.HandleFunc(h.Route, *h.Function).Methods(m)
 		}
 	}
-	m.Stop()
+	err := m.Stop()
+	if err != nil {
+		return fmt.Errorf("Failed to remake router: %s", err.Error())
+	}
 	m.Server = &http.Server{Addr: m.Address, Handler: r}
-	m.Start()
+	err = m.Start()
+	if err != nil {
+		return fmt.Errorf("Failed to remake router: %s", err.Error())
+	}
+	return nil
 }
 
 //NewMutux creates a new instance of Mutux server with port number specified
@@ -258,7 +276,7 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 	allowPUT := true
 	r := mux.NewRouter()
 
-	messagefunc := func(w http.ResponseWriter, r *http.Request) {
+	GETmessagefunc := func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		name := vars["name"]
 		msg, exists := pathmsg[name]
@@ -272,7 +290,21 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		}
 		fmt.Fprintf(w, *msg.Msg)
 	}
-	updatemessagefunc := func(w http.ResponseWriter, r *http.Request) {
+	POSTmessagefunc := func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		name := vars["name"]
+		msg, exists := pathmsg[name]
+		if !exists {
+			http.Error(w, `{"error":"404 page not found"}`, 404)
+			return
+		}
+		w.WriteHeader(*msg.Status)
+		for k, v := range headers {
+			w.Header().Set(k, v)
+		}
+		fmt.Fprintf(w, *msg.Msg)
+	}
+	PUTmessagefunc := func(w http.ResponseWriter, r *http.Request) {
 		if !allowPUT {
 			return
 		}
@@ -301,7 +333,7 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		pathmsg[name] = putmsg
 		fmt.Fprintf(w, "success")
 	}
-	preflightfunc := func(w http.ResponseWriter, r *http.Request) {
+	CORSfunc := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT")
 	}
@@ -309,29 +341,37 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 	handlerfuncs := []Handlerfunc{
 		Handlerfunc{
 			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
-			Function: &messagefunc,
-			Methods:  []string{"GET", "POST"},
+			Function: &GETmessagefunc,
+			Methods:  []string{"GET"},
 		},
 		Handlerfunc{
 			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
-			Function: &updatemessagefunc,
+			Function: &POSTmessagefunc,
+			Methods:  []string{"POST"},
+		},
+		Handlerfunc{
+			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
+			Function: &PUTmessagefunc,
 			Methods:  []string{"PUT"},
 		},
 		Handlerfunc{
 			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
-			Function: &preflightfunc,
+			Function: &CORSfunc,
 			Methods:  []string{"OPTIONS"},
 		},
 	}
 
-	// GET/POST handler returns message for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, messagefunc).Methods("GET", "POST")
+	// GET handler returns message for any URL path
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, GETmessagefunc).Methods("GET")
 
-	// PUT handler updates message body for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, updatemessagefunc).Methods("PUT")
+	// POST handler returns message for any URL path
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, POSTmessagefunc).Methods("POST")
+
+	// PUT handler updates message for any URL path
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, PUTmessagefunc).Methods("PUT")
 
 	// OPTIONS handler handles browser CORS preflight
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, preflightfunc).Methods("OPTIONS")
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, CORSfunc).Methods("OPTIONS")
 
 	server := &http.Server{Addr: addr, Handler: r}
 	listener, err := net.Listen("tcp", addr)
