@@ -98,7 +98,7 @@ func (m *Mutux) AddPathMsg(path, msg string) {
 	if i > 0 {
 		path = path[i:pathlen]
 	}
-	fmt.Println("adding path: /" + path)
+	fmt.Println(fmt.Sprintf("adding path /%s", path))
 	m.Pathmsg[path] = Message{
 		Msg:    &msg,
 		Status: &status,
@@ -110,6 +110,17 @@ func (m *Mutux) AddPathMsgAndStatus(path, msg string, status int) {
 	if m == nil {
 		return
 	}
+	// Need to strip preceding "/", as well as any URL parameters.
+	// Support for URL params will be added later.
+	i := 0
+	pathlen := len(path)
+	for i < pathlen && path[i] == '/' {
+		i++
+	}
+	if i > 0 {
+		path = path[i:pathlen]
+	}
+	fmt.Println(fmt.Sprintf("adding path /%s with status %d", path, status))
 	m.Pathmsg[path] = Message{
 		Msg:    &msg,
 		Status: &status,
@@ -124,7 +135,7 @@ func (m *Mutux) DelPathMsg(path string) {
 	delete(m.Pathmsg, path)
 }
 
-// AddHeader add header to all GET responses
+// AddHeader add header to all GET and POST responses
 func (m *Mutux) AddHeader(name, value string) {
 	if m == nil {
 		return
@@ -132,7 +143,7 @@ func (m *Mutux) AddHeader(name, value string) {
 	m.Headers[name] = value
 }
 
-// DelHeader delete header from all GET responses
+// DelHeader delete header from all GET and POST responses
 func (m *Mutux) DelHeader(name string) {
 	if m == nil {
 		return
