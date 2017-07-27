@@ -16,7 +16,7 @@ func main() {
 	}
 
 	fmt.Println("Starting Mutux server")
-	mutuxServer.StartAsync()
+	mutuxServer.Start()
 
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "myfunc")

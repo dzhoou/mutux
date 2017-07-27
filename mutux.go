@@ -31,6 +31,7 @@ type Message struct {
 	Status *int    `json:"status"`
 }
 
+// Handlerfunc store instances of handler function
 type Handlerfunc struct {
 	Route    string
 	Methods  []string
@@ -59,7 +60,22 @@ func (m *Mutux) remakeListener() error {
 	return nil
 }
 
-// Start start Mutux server in current process
+// StartAndHold start Mutux server in current process
+func (m *Mutux) StartAndHold() error {
+	if m == nil {
+		return nil
+	}
+	if m.Listener == nil {
+		err := m.remakeListener()
+		if err != nil {
+			return err
+		}
+	}
+	fmt.Println("starting server in current process")
+	return (*m.Server).Serve((*m.Listener).(*net.TCPListener))
+}
+
+// Start start Mutux server in go routine
 func (m *Mutux) Start() error {
 	if m == nil {
 		return nil
@@ -71,21 +87,6 @@ func (m *Mutux) Start() error {
 		}
 	}
 	fmt.Println("starting server")
-	return (*m.Server).Serve((*m.Listener).(*net.TCPListener))
-}
-
-// StartAsync start Mutux server in go routine
-func (m *Mutux) StartAsync() error {
-	if m == nil {
-		return nil
-	}
-	if m.Listener == nil {
-		err := m.remakeListener()
-		if err != nil {
-			return err
-		}
-	}
-	fmt.Println("starting server async")
 	go (*m.Server).Serve((*m.Listener).(*net.TCPListener))
 	return nil
 }
@@ -204,7 +205,7 @@ func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *h
 		Function: f,
 		Methods:  methods,
 	})
-	m.RemakeRouterAsync()
+	m.RemakeRouter()
 }
 
 // ClearHandlerFunc delete all user-defined handler funcs
@@ -214,11 +215,11 @@ func (m *Mutux) ClearHandlerFunc() {
 	}
 	// delete func array
 	m.CustomHandlerfuncs = nil
-	m.RemakeRouterAsync()
+	m.RemakeRouter()
 }
 
-// RemakeRouterAsync restart router (to load newly added functions to server host, for example)
-func (m *Mutux) RemakeRouterAsync() {
+// RemakeRouter restart router (to load newly added functions to server host, for example)
+func (m *Mutux) RemakeRouter() {
 	if m == nil {
 		return
 	}
@@ -240,7 +241,7 @@ func (m *Mutux) RemakeRouterAsync() {
 	}
 	m.Stop()
 	m.Server = &http.Server{Addr: m.Address, Handler: r}
-	m.StartAsync()
+	m.Start()
 }
 
 //NewMutux creates a new instance of Mutux server with port number specified
