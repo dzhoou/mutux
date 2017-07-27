@@ -8,14 +8,16 @@ import (
 
 func main() {
 	fmt.Println("Starting Mutux server")
-	mutux, err := mutux.NewMutux(8080)
+	mutuxServer, err := mutux.NewMutux(8080)
 	if err != nil {
 		fmt.Println("Error initiating Mutux server: " + err.Error())
 		return
 	}
-	mutux.StartAsync()
-	mutux.AddPathMsg("hello", `{"message":"Hello, world!"}`)
-	mutux.AddHeader("Content-Type", "application/json")
+
+	mutuxServer.StartAsync()
+	defer mutuxServer.Stop()
+	mutuxServer.AddPathMsg("hello", `{"message":"Hello, world!"}`)
+	mutuxServer.AddHeader("Content-Type", "application/json")
 	// "select {}" hangs main program allowing server to run
 	select {}
 }

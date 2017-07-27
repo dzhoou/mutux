@@ -12,12 +12,12 @@ import (
 
 // Mutux a mutable server that can be set at runtime to return any message at any URL.
 type Mutux struct {
-	Port         int
+	Address      string
 	Listener     *net.Listener
 	Server       *http.Server
 	Pathmsg      map[string]Message
 	Headers      map[string]string
-	AllowPOST    *bool
+	AllowPUT     *bool
 	AsyncSignal  *chan (bool)
 	AsyncStopped *chan (bool)
 }
@@ -29,8 +29,10 @@ type Message struct {
 }
 
 func (m *Mutux) remakeListener() error {
-	addr := fmt.Sprintf(":%d", m.Port)
-	listener, err := net.Listen("tcp", addr)
+	if m == nil {
+		return nil
+	}
+	listener, err := net.Listen("tcp", m.Address)
 	if err != nil {
 		return err
 	}
@@ -40,6 +42,9 @@ func (m *Mutux) remakeListener() error {
 
 // Start start Mutux server in current process
 func (m *Mutux) Start() error {
+	if m == nil {
+		return nil
+	}
 	if m.Listener == nil {
 		err := m.remakeListener()
 		if err != nil {
@@ -52,6 +57,9 @@ func (m *Mutux) Start() error {
 
 // StartAsync start Mutux server in go routine
 func (m *Mutux) StartAsync() error {
+	if m == nil {
+		return nil
+	}
 	if m.Listener == nil {
 		err := m.remakeListener()
 		if err != nil {
@@ -65,6 +73,9 @@ func (m *Mutux) StartAsync() error {
 
 // Stop close Mutux server
 func (m *Mutux) Stop() error {
+	if m == nil {
+		return nil
+	}
 	if m.Server != nil {
 		fmt.Println("closing server")
 		m.Server.Shutdown(nil)
@@ -75,7 +86,21 @@ func (m *Mutux) Stop() error {
 
 // AddPathMsg add message to a URL path
 func (m *Mutux) AddPathMsg(path, msg string) {
+	if m == nil {
+		return
+	}
 	status := 200
+	// Need to strip preceding "/", as well as any URL parameters.
+	// Support for URL params will be added later.
+	i := 0
+	pathlen := len(path)
+	for i < pathlen && path[i] == '/' {
+		i++
+	}
+	if i > 0 {
+		path = path[i:pathlen]
+	}
+	fmt.Println("adding path: /" + path)
 	m.Pathmsg[path] = Message{
 		Msg:    &msg,
 		Status: &status,
@@ -84,6 +109,9 @@ func (m *Mutux) AddPathMsg(path, msg string) {
 
 // AddPathMsgAndStatus add message to a URL path, with specified status code
 func (m *Mutux) AddPathMsgAndStatus(path, msg string, status int) {
+	if m == nil {
+		return
+	}
 	m.Pathmsg[path] = Message{
 		Msg:    &msg,
 		Status: &status,
@@ -92,40 +120,60 @@ func (m *Mutux) AddPathMsgAndStatus(path, msg string, status int) {
 
 // DelPathMsg delete msg from a URL path
 func (m *Mutux) DelPathMsg(path string) {
+	if m == nil {
+		return
+	}
 	delete(m.Pathmsg, path)
 }
 
 // AddHeader add header to all GET responses
 func (m *Mutux) AddHeader(name, value string) {
+	if m == nil {
+		return
+	}
 	m.Headers[name] = value
 }
 
 // DelHeader delete header from all GET responses
 func (m *Mutux) DelHeader(name string) {
+	if m == nil {
+		return
+	}
 	delete(m.Headers, name)
 }
 
-// EnablePOST enable modifying path message by POST
-func (m *Mutux) EnablePOST() {
-	*m.AllowPOST = true
+// EnablePUT enable modifying path message by PUT
+func (m *Mutux) EnablePUT() {
+	if m == nil {
+		return
+	}
+	*m.AllowPUT = true
 }
 
-// DisablePOST disable modifying path message by POST
-func (m *Mutux) DisablePOST() {
-	*m.AllowPOST = false
+// DisablePUT disable modifying path message by PUT
+func (m *Mutux) DisablePUT() {
+	if m == nil {
+		return
+	}
+	*m.AllowPUT = false
 }
 
-//NewMutux creates a new instance of Mutux server
+//NewMutux creates a new instance of Mutux server with port number specified
 func NewMutux(port int) (*Mutux, error) {
+	return NewMutuxWithAddr(fmt.Sprintf(":%d", port))
+}
+
+//NewMutuxWithAddr creates a new instance of Mutux server with string address specified
+func NewMutuxWithAddr(addr string) (*Mutux, error) {
 	pathmsg := map[string]Message{}
 	headers := map[string]string{
 		"Content-type": "application/json",
 	}
-	allowPOST := true
+	allowPUT := true
 	r := mux.NewRouter()
 
 	// GET handler returns message for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]+}`, func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		name := vars["name"]
 		msg, exists := pathmsg[name]
@@ -140,9 +188,25 @@ func NewMutux(port int) (*Mutux, error) {
 		fmt.Fprintf(w, *msg.Msg)
 	}).Methods("GET")
 
-	// POST handler stores message body for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]+}`, func(w http.ResponseWriter, r *http.Request) {
-		if !allowPOST {
+	// POST handler returns message for any URL path
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		name := vars["name"]
+		msg, exists := pathmsg[name]
+		if !exists {
+			http.Error(w, "404 page not found", 404)
+			return
+		}
+		w.WriteHeader(*msg.Status)
+		for k, v := range headers {
+			w.Header().Set(k, v)
+		}
+		fmt.Fprintf(w, *msg.Msg)
+	}).Methods("POST")
+
+	// PUT handler stores message body for any URL path
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
+		if !allowPUT {
 			return
 		}
 		vars := mux.Vars(r)
@@ -152,43 +216,44 @@ func NewMutux(port int) (*Mutux, error) {
 			http.Error(w, fmt.Sprintf("Error reading body: %s", err.Error()), 500)
 			return
 		}
-		postmsg := Message{}
-		err = json.Unmarshal(body, &postmsg)
+		putmsg := Message{}
+		err = json.Unmarshal(body, &putmsg)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Error unmarshalling body: %s", err.Error()), 500)
 			return
 		}
-		if postmsg.Msg == nil {
+		if putmsg.Msg == nil {
 			http.Error(w, fmt.Sprintf("Error: message is empty"), 500)
 			return
 		}
-		if postmsg.Status == nil {
+		if putmsg.Status == nil {
 			status := 200
-			postmsg.Status = &status
+			putmsg.Status = &status
 		}
-		pathmsg[name] = postmsg
+		fmt.Println("adding path: /" + name)
+		pathmsg[name] = putmsg
 		fmt.Fprintf(w, "success")
-	}).Methods("POST")
+	}).Methods("PUT")
 
 	// OPTIONS handler handles browser CORS preflight
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]+}`, func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT")
 	}).Methods("OPTIONS")
 
-	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: r}
-	addr := fmt.Sprintf(":%d", port)
+	server := &http.Server{Addr: addr, Handler: r}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 
 	mutux := Mutux{
-		Port:      port,
-		Server:    server,
-		Listener:  &listener,
-		Pathmsg:   pathmsg,
-		Headers:   headers,
-		AllowPOST: &allowPOST,
+		Address:  addr,
+		Server:   server,
+		Listener: &listener,
+		Pathmsg:  pathmsg,
+		Headers:  headers,
+		AllowPUT: &allowPUT,
 	}
 
 	return &mutux, nil

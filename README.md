@@ -9,9 +9,9 @@ mutux-golang
 ```go
 mutux.AddPathMsgAndStatus("hello", "Hello, world!", 200)
 ```
-### 2. External POST
+### 2. External PUT
 ```
-POST /hello
+PUT /hello
 {"message":"Hello, world!", "status":200}
 ```
 
