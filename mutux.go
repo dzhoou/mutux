@@ -12,14 +12,12 @@ import (
 
 // Mutux a mutable server that can be set at runtime to return any message at any URL.
 type Mutux struct {
-	Address      string
-	Listener     *net.Listener
-	Server       *http.Server
-	Pathmsg      map[string]Message
-	Headers      map[string]string
-	AllowPUT     *bool
-	AsyncSignal  *chan (bool)
-	AsyncStopped *chan (bool)
+	Address  string
+	Listener *net.Listener
+	Server   *http.Server
+	Pathmsg  map[string]Message
+	Headers  map[string]string
+	AllowPUT *bool
 }
 
 // Message store message and status to return for a given path
