@@ -98,6 +98,7 @@ func (m *Mutux) AddPathMsg(path, msg string) {
 	if i > 0 {
 		path = path[i:pathlen]
 	}
+	path = strings.Split(path, "?")[0]
 	fmt.Println(fmt.Sprintf("adding path /%s", path))
 	m.Pathmsg[path] = Message{
 		Msg:    &msg,
@@ -120,6 +121,7 @@ func (m *Mutux) AddPathMsgAndStatus(path, msg string, status int) {
 	if i > 0 {
 		path = path[i:pathlen]
 	}
+	path = strings.Split(path, "?")[0]
 	fmt.Println(fmt.Sprintf("adding path /%s with status %d", path, status))
 	m.Pathmsg[path] = Message{
 		Msg:    &msg,
