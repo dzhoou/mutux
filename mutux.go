@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-
+	"strings"
 	"github.com/gorilla/mux"
 )
 
