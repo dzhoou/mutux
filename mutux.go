@@ -50,8 +50,7 @@ func (m *Mutux) remakeListener() error {
 	listener, err := net.Listen("tcp", m.Address)
 	if err != nil {
 		for i := 0; i < 100; i++ {
-			time.Sleep(200 * time.Millisecond)
-			fmt.Println(err.Error())
+			time.Sleep(20 * time.Millisecond)
 			listener, err = net.Listen("tcp", m.Address)
 			if err == nil {
 				break
@@ -112,7 +111,7 @@ func (m *Mutux) Stop() error {
 		return nil
 	}
 	if m.Server != nil {
-		fmt.Println("\nclosing server")
+		fmt.Println("\nClosing server")
 		err := (*m.Listener).Close()
 		if err != nil {
 			return err
@@ -210,18 +209,14 @@ func (m *Mutux) DisablePUT() {
 }
 
 // AddHandlerFunc add user-defined handler func to path
-func (m *Mutux) AddHandlerFunc(route string, f interface{}, methods []string) {
+func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *http.Request), methods []string) {
 	if m == nil {
 		return
-	}
-	f19, ok := f.(*func(w http.ResponseWriter, r *http.Request))
-	if !ok {
-		panic("type assertion failed")
 	}
 	// Add to func array
 	m.CustomHandlerfuncs = append(m.CustomHandlerfuncs, Handlerfunc{
 		Route:    route,
-		Function: f19,
+		Function: f,
 		Methods:  methods,
 	})
 }

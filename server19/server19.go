@@ -6,18 +6,14 @@ import (
 	"net/http"
 )
 
+// Server Server instance with ServeTLS function implemented
 type Server struct {
 	http.Server
-	//nextProtoOnce sync.Once // guards setupHTTP2_* init
-	//nextProtoErr  error     // result of http2.ConfigureServer if used
 }
 
+// ServeTLS Start server with TLS connection, albeit without HTTP/2 support
+// To be deprecated in Golang 1.9 release.
 func (srv *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
-	// Setup HTTP/2 before srv.Serve, to initialize srv.TLSConfig
-	// before we clone it and create the TLS Listener.
-	// if err := srv.setupHTTP2_ServeTLS(); err != nil {
-	// 	return err
-	// }
 
 	config := cloneTLSConfig(srv.TLSConfig)
 	if !strSliceContains(config.NextProtos, "http/1.1") {
@@ -53,22 +49,3 @@ func strSliceContains(ss []string, s string) bool {
 	}
 	return false
 }
-
-// func (srv *Server19) setupHTTP2_ServeTLS() error {
-// 	srv.nextProtoOnce.Do(srv.onceSetNextProtoDefaults)
-// 	return srv.nextProtoErr
-// }
-
-// func (srv *Server19) onceSetNextProtoDefaults() {
-// 	if strings.Contains(os.Getenv("GODEBUG"), "http2server=0") {
-// 		return
-// 	}
-// 	// Enable HTTP/2 by default if the user hasn't otherwise
-// 	// configured their TLSNextProto map.
-// 	if srv.TLSNextProto == nil {
-// 		conf := &http2Server{
-// 			NewWriteScheduler: func() http2WriteScheduler { return http2NewPriorityWriteScheduler(nil) },
-// 		}
-// 		srv.nextProtoErr = http2ConfigureServer(srv, conf)
-// 	}
-// }
