@@ -5,18 +5,22 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
-	"net/http"
 	"strings"
 	"time"
 
+	"net/http"
+
+	"github.com/dzhoou/mutux/server19"
 	"github.com/gorilla/mux"
 )
 
 // Mutux a mutable server that can be set at runtime to return any message at any URL.
 type Mutux struct {
 	Address            string
+	Certfile           string
+	Keyfile            string
 	Listener           *net.Listener
-	Server             *http.Server
+	Server             *server19.Server
 	Pathmsg            map[string]Message
 	Headers            map[string]string
 	AllowPUT           *bool
@@ -46,7 +50,8 @@ func (m *Mutux) remakeListener() error {
 	listener, err := net.Listen("tcp", m.Address)
 	if err != nil {
 		for i := 0; i < 100; i++ {
-			time.Sleep(20 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
+			fmt.Println(err.Error())
 			listener, err = net.Listen("tcp", m.Address)
 			if err == nil {
 				break
@@ -58,7 +63,7 @@ func (m *Mutux) remakeListener() error {
 		fmt.Println("\nFailed to remake listener after retries")
 		return err
 	}
-	fmt.Println("\nsuccess remaking listener.")
+	fmt.Println("\nSuccess remaking listener.")
 	m.Listener = &listener
 	return nil
 }
@@ -75,6 +80,9 @@ func (m *Mutux) StartAndHold() error {
 		}
 	}
 	fmt.Println("starting server in current process")
+	if m.Certfile != "" && m.Keyfile != "" {
+		return (*m.Server).ServeTLS((*m.Listener).(*net.TCPListener), m.Certfile, m.Keyfile)
+	}
 	return (*m.Server).Serve((*m.Listener).(*net.TCPListener))
 }
 
@@ -90,7 +98,11 @@ func (m *Mutux) Start() error {
 		}
 	}
 	fmt.Println("starting server")
-	go (*m.Server).Serve((*m.Listener).(*net.TCPListener))
+	if m.Certfile != "" && m.Keyfile != "" {
+		go (*m.Server).ServeTLS((*m.Listener).(*net.TCPListener), m.Certfile, m.Keyfile)
+	} else {
+		go (*m.Server).Serve((*m.Listener).(*net.TCPListener))
+	}
 	return nil
 }
 
@@ -100,8 +112,8 @@ func (m *Mutux) Stop() error {
 		return nil
 	}
 	if m.Server != nil {
-		fmt.Println("closing server")
-		err := m.Server.Shutdown(nil)
+		fmt.Println("\nclosing server")
+		err := (*m.Listener).Close()
 		if err != nil {
 			return err
 		}
@@ -198,7 +210,24 @@ func (m *Mutux) DisablePUT() {
 }
 
 // AddHandlerFunc add user-defined handler func to path
-func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *http.Request), methods []string) error {
+func (m *Mutux) AddHandlerFunc(route string, f interface{}, methods []string) {
+	if m == nil {
+		return
+	}
+	f19, ok := f.(*func(w http.ResponseWriter, r *http.Request))
+	if !ok {
+		panic("type assertion failed")
+	}
+	// Add to func array
+	m.CustomHandlerfuncs = append(m.CustomHandlerfuncs, Handlerfunc{
+		Route:    route,
+		Function: f19,
+		Methods:  methods,
+	})
+}
+
+// AddHandlerFuncAndRestart add user-defined handler func to path, and restart the server for change to take effect
+func (m *Mutux) AddHandlerFuncAndRestart(route string, f *func(w http.ResponseWriter, r *http.Request), methods []string) error {
 	if m == nil {
 		return nil
 	}
@@ -208,58 +237,83 @@ func (m *Mutux) AddHandlerFunc(route string, f *func(w http.ResponseWriter, r *h
 		Function: f,
 		Methods:  methods,
 	})
-	err := m.RemakeRouter()
+	err := m.Restart()
 	if err != nil {
 		return fmt.Errorf("Failed to add handler function: %s", err.Error())
 	}
 	return nil
 }
 
-// ClearHandlerFunc delete all user-defined handler funcs
-func (m *Mutux) ClearHandlerFunc() error {
+// ClearHandlerFunc delete all user-defined handler funcs, and restart the server for change to take effect
+func (m *Mutux) ClearHandlerFunc() {
+	if m == nil {
+		return
+	}
+	// delete func array
+	m.CustomHandlerfuncs = nil
+}
+
+// ClearHandlerFuncAndRestart delete all user-defined handler funcs, and restart the server for change to take effect
+func (m *Mutux) ClearHandlerFuncAndRestart() error {
 	if m == nil {
 		return nil
 	}
 	// delete func array
 	m.CustomHandlerfuncs = nil
-	err := m.RemakeRouter()
+	err := m.Restart()
 	if err != nil {
 		return fmt.Errorf("Failed to clear handler functions: %s", err.Error())
 	}
 	return nil
 }
 
-// RemakeRouter restart router (to load newly added functions to server host, for example)
-func (m *Mutux) RemakeRouter() error {
+// Restart restart server (to load newly added functions to server host, for example)
+func (m *Mutux) Restart() error {
 	if m == nil {
 		return nil
 	}
 	// recreate router
 	r := mux.NewRouter()
-	// add custom funcs to router; they are added before the original funcs because otherwise the original funcs would override the custom funcs
-	// add custom funcs in reverse order so that newly added funcs have higher processing priority
-	for i := len(m.CustomHandlerfuncs) - 1; i >= 0; i-- {
-		h := m.CustomHandlerfuncs[i]
-		for _, m := range h.Methods {
-			r.HandleFunc(h.Route, *h.Function).Methods(m)
-		}
-	}
-	// add back original message funcs to router
-	for _, h := range m.handlerfuncs {
-		for _, m := range h.Methods {
-			r.HandleFunc(h.Route, *h.Function).Methods(m)
-		}
-	}
+
+	m.addHandlersToRouter(r)
+
 	err := m.Stop()
 	if err != nil {
 		return fmt.Errorf("Failed to remake router: %s", err.Error())
 	}
-	m.Server = &http.Server{Addr: m.Address, Handler: r}
+	m.Server = &server19.Server{}
+	m.Server.Addr = m.Address
+	m.Server.Handler = r
 	err = m.Start()
 	if err != nil {
 		return fmt.Errorf("Failed to remake router: %s", err.Error())
 	}
 	return nil
+}
+
+func (m *Mutux) addHandlersToRouter(r *mux.Router) {
+	// add custom funcs to router; they are added before the original funcs because otherwise the original funcs would override the custom funcs
+	// add custom funcs in reverse order so that newly added funcs have higher processing priority
+	for i := len(m.CustomHandlerfuncs) - 1; i >= 0; i-- {
+		h := m.CustomHandlerfuncs[i]
+		if h.Methods != nil {
+			for _, m := range h.Methods {
+				r.HandleFunc(h.Route, *h.Function).Methods(m)
+			}
+		} else {
+			r.HandleFunc(h.Route, *h.Function)
+		}
+	}
+	// add back original message funcs to router
+	for _, h := range m.handlerfuncs {
+		if h.Methods != nil {
+			for _, m := range h.Methods {
+				r.HandleFunc(h.Route, *h.Function).Methods(m)
+			}
+		} else {
+			r.HandleFunc(h.Route, *h.Function)
+		}
+	}
 }
 
 //NewMutux creates a new instance of Mutux server with port number specified
@@ -339,21 +393,25 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 	}
 
 	handlerfuncs := []Handlerfunc{
+		// GET handler returns message for any URL path
 		Handlerfunc{
 			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
 			Function: &GETmessagefunc,
 			Methods:  []string{"GET"},
 		},
+		// POST handler returns message for any URL path
 		Handlerfunc{
 			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
 			Function: &POSTmessagefunc,
 			Methods:  []string{"POST"},
 		},
+		// PUT handler updates message for any URL path
 		Handlerfunc{
 			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
 			Function: &PUTmessagefunc,
 			Methods:  []string{"PUT"},
 		},
+		// OPTIONS handler handles browser CORS preflight
 		Handlerfunc{
 			Route:    `/{name:[a-zA-Z0-9=\-\/]*}`,
 			Function: &CORSfunc,
@@ -361,19 +419,9 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		},
 	}
 
-	// GET handler returns message for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, GETmessagefunc).Methods("GET")
-
-	// POST handler returns message for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, POSTmessagefunc).Methods("POST")
-
-	// PUT handler updates message for any URL path
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, PUTmessagefunc).Methods("PUT")
-
-	// OPTIONS handler handles browser CORS preflight
-	r.HandleFunc(`/{name:[a-zA-Z0-9=\-\/]*}`, CORSfunc).Methods("OPTIONS")
-
-	server := &http.Server{Addr: addr, Handler: r}
+	server := &server19.Server{}
+	server.Addr = addr
+	server.Handler = r
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -389,6 +437,8 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		Handler:      r,
 		handlerfuncs: handlerfuncs,
 	}
+
+	mutux.addHandlersToRouter(r)
 
 	return &mutux, nil
 }

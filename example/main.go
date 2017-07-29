@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"net/http"
 
 	mutux "github.com/dzhoou/mutux"
@@ -23,6 +24,7 @@ func main() {
 	}
 	mutuxServer.AddHandlerFunc(`/myfunc`, &fn, []string{"GET"})
 	mutuxServer.AddPathMsg("hello", `{"message":"Hello, world!"}`)
+	mutuxServer.Restart()
 
 	// "select {}" hangs main program allowing server to run
 	select {}
