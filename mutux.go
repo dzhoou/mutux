@@ -337,6 +337,7 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		for k, v := range headers {
 			w.Header().Set(k, v)
 		}
+		fmt.Printf("\nIn GET message handler, returning: \n%s\n", *msg.Msg)
 		fmt.Fprintf(w, *msg.Msg)
 	}
 	POSTmessagefunc := func(w http.ResponseWriter, r *http.Request) {
@@ -351,6 +352,7 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		for k, v := range headers {
 			w.Header().Set(k, v)
 		}
+		fmt.Printf("\nIn POST message handler, returning: \n%s\n", *msg.Msg)
 		fmt.Fprintf(w, *msg.Msg)
 	}
 	PUTmessagefunc := func(w http.ResponseWriter, r *http.Request) {
