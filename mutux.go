@@ -10,7 +10,6 @@ import (
 
 	"net/http"
 
-	"github.com/dzhoou/mutux/server19"
 	"github.com/gorilla/mux"
 )
 
@@ -20,7 +19,7 @@ type Mutux struct {
 	Certfile           string
 	Keyfile            string
 	Listener           *net.Listener
-	Server             *server19.Server
+	Server             *http.Server
 	Pathmsg            map[string]Message
 	Headers            map[string]string
 	AllowPUT           *bool
@@ -276,7 +275,7 @@ func (m *Mutux) Restart() error {
 	if err != nil {
 		return fmt.Errorf("Failed to remake router: %s", err.Error())
 	}
-	m.Server = &server19.Server{}
+	m.Server = &http.Server{}
 	m.Server.Addr = m.Address
 	m.Server.Handler = r
 	err = m.Start()
@@ -416,7 +415,7 @@ func NewMutuxWithAddr(addr string) (*Mutux, error) {
 		},
 	}
 
-	server := &server19.Server{}
+	server := &http.Server{}
 	server.Addr = addr
 	server.Handler = r
 	listener, err := net.Listen("tcp", addr)
